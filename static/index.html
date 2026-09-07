@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0c0e14">
+<meta name="csrf-token" content="__CSRF_TOKEN__">
+<title>Vervfy</title>
+<link rel="icon" type="image/svg+xml" href="/static/gemini-svg.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css?v=6">
+<script>
+/* Clear stale service workers / caches that can leave the UI dead after updates.
+   Do NOT register a new worker here — /sw.js is only served so an already-installed
+   worker that updates from that URL installs a kill-switch and removes itself. */
+(function(){
+  if(!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.getRegistrations().then(function(regs){
+    regs.forEach(function(reg){ reg.unregister(); });
+  });
+  if(window.caches && caches.keys){
+    caches.keys().then(function(keys){ keys.forEach(function(k){ caches.delete(k); }); });
+  }
+})();
+</script>
+</head>
+<body>
+
+<div class="field" aria-hidden="true">
+  <div class="field-blob field-blob-a"></div>
+  <div class="field-blob field-blob-b"></div>
+</div>
+
+<div id="app">
+  <div class="shell">
+    <!-- SIDEBAR -->
+    <nav class="rail">
+      <div class="logo-mark" title="Vervfy">
+        <div class="logo-squircle">
+          <img class="brand-logo" src="/static/gemini-svg.svg" alt="Vervfy logo" width="54" height="54">
+        </div>
+        <span class="logo-word">Vervfy</span>
+      </div>
+      <button class="rail-btn active" data-view="library" data-tip="Library">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="2"/><rect x="13.5" y="3.5" width="7" height="7" rx="2"/><rect x="3.5" y="13.5" width="7" height="7" rx="2"/><rect x="13.5" y="13.5" width="7" height="7" rx="2"/></svg>
+      </button>
+      <button class="rail-btn" data-view="playlists" data-tip="Playlists">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h12M4 12h12M4 17h8"/><path d="M18 8v8.2"/><circle cx="18" cy="17.5" r="1.8"/></svg>
+      </button>
+      <button class="rail-btn" data-view="artists" data-tip="Artists">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 19.2c0-3.2 2.9-5.5 6.5-5.5s6.5 2.3 6.5 5.5"/><circle cx="18.2" cy="9.2" r="2.1"/><path d="M19.5 19.2c0-2.1-1.3-3.8-3.2-4.6"/></svg>
+      </button>
+      <button class="rail-btn" data-view="favorites" data-tip="Favorites">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.35-9.4-8.9C.8 7.5 3.1 4.2 6.6 4.2c1.9 0 3.3 1.05 4.4 2.55C12.1 5.25 13.5 4.2 15.4 4.2c3.5 0 5.8 3.3 4 6.9C17 15.65 12 20 12 20Z"/></svg>
+      </button>
+      <button class="rail-btn" data-view="queue" data-tip="Queue">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5h16M4 12h10M4 17.5h10"/><path d="M16.5 14.2l4 2.3-4 2.3z" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <button class="rail-btn" data-view="account" data-tip="Account">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.4"/><path d="M5 20c0-3.6 3.1-6.2 7-6.2s7 2.6 7 6.2"/></svg>
+      </button>
+      <div class="rail-spacer"></div>
+      <form method="post" action="/logout" class="rail-logout">
+        <input type="hidden" name="csrf_token" value="__CSRF_TOKEN__">
+        <button class="rail-btn" type="submit" data-tip="Log out">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
+        </button>
+      </form>
+      <button class="rail-btn" id="btnShortcuts" data-tip="Shortcuts (?)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.25"/><path d="M9.6 9.4a2.4 2.4 0 1 1 3.1 2.25c-.85.35-1.2.8-1.2 1.7"/><circle cx="12" cy="16.6" r=".7" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <button class="rail-btn" id="btnImportRail" data-tip="Add music">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m8.5 11.5 3.5 3.5 3.5-3.5"/><path d="M5 18.5h14"/></svg>
+      </button>
+    </nav>
+
+    <!-- MAIN -->
+    <div class="main">
+      <div class="topbar">
+        <div class="topbar-id">
+          <span class="view-title" id="viewTitle">Library</span>
+          <span class="view-count" id="viewCount"></span>
+        </div>
+        <div class="view-toggle" id="viewToggle">
+          <button data-mode="grid" class="active" title="Grid view">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.8"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.8"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.8"/></svg>
+          </button>
+          <button data-mode="list" title="List view">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4.5 7h15M4.5 12h15M4.5 17h15"/></svg>
+          </button>
+        </div>
+        <div class="search-wrap">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="6.5"/><path d="m20 20-3.8-3.8"/></svg>
+          <input id="searchInput" placeholder="Search" autocomplete="off">
+          <span class="kbd">/</span>
+        </div>
+        <button class="btn btn-primary" id="btnImportTop">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"/><path d="m8.5 11.5 3.5 3.5 3.5-3.5"/><path d="M5 18.5h14"/></svg>
+          <span id="btnImportTopLabel">Add music</span>
+        </button>
+      </div>
+
+      <div class="content" id="content"><!-- rendered by JS --></div>
+    </div>
+  </div>
+
+  <!-- NOW PLAYING BAR -->
+  <div class="nowbar hidden" id="nowbar">
+    <div class="now-track">
+      <div class="now-art-wrap">
+        <div class="now-art"><img id="nowArt" src="" alt=""></div>
+      </div>
+      <div class="now-meta">
+        <div class="now-title" id="nowTitle">—</div>
+        <div class="now-artist" id="nowArtist">—</div>
+      </div>
+      <button class="now-fav" id="nowFav" title="Favorite (F)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20s-7-4.35-9.4-8.9C.8 7.5 3.1 4.2 6.6 4.2c1.9 0 3.3 1.05 4.4 2.55C12.1 5.25 13.5 4.2 15.4 4.2c3.5 0 5.8 3.3 4 6.9C17 15.65 12 20 12 20Z"/></svg>
+      </button>
+    </div>
+
+    <div class="transport">
+      <div class="transport-btns">
+        <button class="tbtn" id="btnShuffle" title="Shuffle">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5h3.2l7.2 11H21"/><path d="M17.5 4.5 21 6.5l-3.5 2"/><path d="M3 17.5h3.2l3.2-4.9"/><path d="M17.5 19.5 21 17.5l-3.5-2"/></svg>
+        </button>
+        <button class="tbtn" id="btnPrev" title="Previous (Shift+←)">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.5 6.5h2.2v11H6.5zM19.5 6.8 9.8 12l9.7 5.2z"/></svg>
+        </button>
+        <button class="tbtn tbtn-play" id="btnPlay" title="Play/Pause (Space)">
+          <svg id="iconPlay" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6.8v10.4L18.2 12z"/></svg>
+        </button>
+        <button class="tbtn" id="btnNext" title="Next (Shift+→)">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.3 6.5h2.2v11h-2.2zM4.5 6.8 14.2 12 4.5 17.2z"/></svg>
+        </button>
+        <button class="tbtn" id="btnRepeat" title="Repeat">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3.5l3.5 3.5L17 10.5"/><path d="M4 11.5V9.2A3.7 3.7 0 0 1 7.7 5.5H20.5"/><path d="M7 20.5 3.5 17 7 13.5"/><path d="M20 12.5v2.3a3.7 3.7 0 0 1-3.7 3.7H3.5"/></svg>
+        </button>
+      </div>
+      <div class="seek-row">
+        <span class="time" id="timeCur">0:00</span>
+        <div class="seek" id="seek">
+          <div class="seek-track"><div class="seek-fill" id="seekFill"></div></div>
+          <div class="seek-thumb" id="seekThumb"></div>
+        </div>
+        <span class="time right" id="timeDur">0:00</span>
+      </div>
+    </div>
+
+    <div class="now-extra">
+      <button class="icon-btn" id="btnLyrics" title="Lyrics (L)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4.5h8.5L19.5 8.5v11H7z"/><path d="M15.5 4.5V8.5h4"/><path d="M10 13h5.5M10 16.5h3.5"/></svg>
+      </button>
+      <button class="icon-btn" id="btnViz" title="Visualizer (V)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 16V9.5M9.5 18.5V6M14 18.5v-7M18.5 16V8"/></svg>
+      </button>
+      <button class="icon-btn" id="btnQueueToggle" title="Queue">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4.5 7h15M4.5 12h9.5M4.5 17h9.5"/></svg>
+      </button>
+      <button class="icon-btn" id="btnMini" title="Mini player (N)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="3.5" width="17" height="17" rx="4"/><rect x="12" y="12" width="7" height="6.5" rx="2" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <div class="vol-wrap">
+        <button class="icon-btn" id="btnMute" style="width:22px;height:22px;">
+          <svg id="iconVol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 9.5v5h3.5l4.5 3.5v-12L8 9.5H4.5Z"/><path d="M17 8.5a4.8 4.8 0 0 1 0 7"/></svg>
+        </button>
+        <div class="vol-track" id="volTrack"><div class="vol-fill" id="volFill" style="width:70%"></div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MINI PLAYER -->
+  <div class="mini-player" id="miniPlayer">
+    <div class="mini-drag" id="miniDrag"></div>
+    <button class="mini-exit" id="btnMiniExit"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
+    <div class="mini-body">
+      <div class="mini-art-wrap">
+        <div class="mini-art"><img id="miniArt" src="" alt=""></div>
+      </div>
+      <div class="mini-meta">
+        <div class="mini-title" id="miniTitle">—</div>
+        <div class="mini-artist" id="miniArtist">—</div>
+      </div>
+      <div class="seek-row mini-seek">
+        <span class="time" id="miniCur">0:00</span>
+        <div class="seek" id="miniSeek"><div class="seek-track"><div class="seek-fill" id="miniSeekFill"></div></div><div class="seek-thumb" id="miniSeekThumb"></div></div>
+        <span class="time right" id="miniDur">0:00</span>
+      </div>
+      <div class="mini-btns">
+        <button class="tbtn" id="miniPrev"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6.5 6.5h2.2v11H6.5zM19.5 6.8 9.8 12l9.7 5.2z"/></svg></button>
+        <button class="tbtn tbtn-play" id="miniPlay"><svg id="miniIconPlay" viewBox="0 0 24 24" fill="currentColor"><path d="M9 6.8v10.4L18.2 12z"/></svg></button>
+        <button class="tbtn" id="miniNext"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M15.3 6.5h2.2v11h-2.2zM4.5 6.8 14.2 12 4.5 17.2z"/></svg></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- QUEUE / SIDE PANEL -->
+  <div class="side-panel" id="sidePanel">
+    <div class="side-head"><h3>Up next</h3><button class="icon-btn" id="btnCloseQueue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 7l10 10M17 7 7 17"/></svg></button></div>
+    <div class="side-body" id="queueList"></div>
+  </div>
+
+  <!-- LYRICS OVERLAY -->
+  <div class="lyrics-overlay" id="lyricsOverlay">
+    <div class="lyrics-bg" id="lyricsBg"></div>
+    <button class="lyrics-close" id="lyricsClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
+    <div class="lyrics-stage" id="lyricsStage"></div>
+  </div>
+
+  <!-- VISUALIZER OVERLAY -->
+  <div class="viz-overlay" id="vizOverlay">
+    <button class="viz-close" id="vizClose"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 7l10 10M17 7 7 17"/></svg></button>
+    <canvas id="vizCanvas" width="640" height="640"></canvas>
+    <div class="viz-meta"><div class="t" id="vizTitle">—</div><div class="a" id="vizArtist">—</div></div>
+  </div>
+
+  <!-- SHORTCUTS OVERLAY -->
+  <div class="shortcuts-overlay" id="shortcutsOverlay">
+    <div class="shortcuts-card">
+      <h3>Keyboard shortcuts</h3>
+      <div class="sc-row"><span>Play / pause</span><span class="kbd">Space</span></div>
+      <div class="sc-row"><span>Seek back / forward 5s</span><span class="kbd">← →</span></div>
+      <div class="sc-row"><span>Previous / next track</span><span class="kbd">Shift + ← →</span></div>
+      <div class="sc-row"><span>Volume up / down</span><span class="kbd">↑ ↓</span></div>
+      <div class="sc-row"><span>Mute</span><span class="kbd">M</span></div>
+      <div class="sc-row"><span>Toggle favorite</span><span class="kbd">F</span></div>
+      <div class="sc-row"><span>Focus search</span><span class="kbd">/</span></div>
+      <div class="sc-row"><span>Mini player</span><span class="kbd">N</span></div>
+      <div class="sc-row"><span>Lyrics</span><span class="kbd">L</span></div>
+      <div class="sc-row"><span>Visualizer</span><span class="kbd">V</span></div>
+      <div class="sc-row"><span>Close overlay</span><span class="kbd">Esc</span></div>
+      <div class="sc-row"><span>This panel</span><span class="kbd">?</span></div>
+    </div>
+  </div>
+
+  <!-- DROP OVERLAY -->
+  <div class="drop-overlay" id="dropOverlay">
+    <div class="empty-orb"></div>
+    <h3>Drop to import into Vervfy</h3>
+  </div>
+
+  <div class="toast-wrap" id="toastWrap"></div>
+
+  <input type="file" id="fileInput" class="hidden-input" accept="audio/*,.mp3,.m4a,.flac,.ogg,.wav,.aac,.opus" multiple>
+  <input type="file" id="folderInput" class="hidden-input" accept="audio/*,.mp3,.m4a,.flac,.ogg,.wav,.aac,.opus" multiple webkitdirectory>
+</div>
+
+<script src="/static/app.js?v=6"></script>
+</body>
+</html>

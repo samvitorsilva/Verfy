@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0c0e14">
+<title>Create account — Vervfy</title>
+<link rel="icon" type="image/svg+xml" href="/static/gemini-svg.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css?v=5">
+<link rel="stylesheet" href="/static/auth.css?v=2">
+</head>
+<body>
+<div class="field" aria-hidden="true">
+  <div class="field-blob field-blob-a"></div>
+  <div class="field-blob field-blob-b"></div>
+</div>
+
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <img src="/static/gemini-svg.svg" alt="" width="28" height="28">
+      Vervfy
+    </div>
+    <div class="auth-title">Create your account</div>
+    <div class="auth-sub">Your library, uploads, and covers will be synced to it.</div>
+
+    {% if error %}
+    <div class="auth-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/register">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="auth-field">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required autofocus
+               minlength="3" maxlength="32" pattern="[a-zA-Z0-9_.\-]+"
+               value="{{ username or '' }}">
+      </div>
+      <div class="auth-field">
+        <label for="email">Email (optional)</label>
+        <input id="email" name="email" type="email" autocomplete="email" value="{{ email or '' }}">
+      </div>
+      <div class="auth-field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="new-password" required minlength="8">
+      </div>
+      <button class="auth-submit" type="submit">Create account</button>
+    </form>
+
+    <div class="auth-footer">Already have an account? <a href="/login">Log in</a></div>
+  </div>
+</div>
+</body>
+</html>

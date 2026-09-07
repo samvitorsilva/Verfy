@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#0c0e14">
+<title>Log in — Vervfy</title>
+<link rel="icon" type="image/svg+xml" href="/static/gemini-svg.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/styles.css?v=5">
+<link rel="stylesheet" href="/static/auth.css?v=2">
+</head>
+<body>
+<div class="field" aria-hidden="true">
+  <div class="field-blob field-blob-a"></div>
+  <div class="field-blob field-blob-b"></div>
+</div>
+
+<div class="auth-page">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <img src="/static/gemini-svg.svg" alt="" width="28" height="28">
+      Vervfy
+    </div>
+    <div class="auth-title">Welcome back</div>
+    <div class="auth-sub">Log in to reach your synced library.</div>
+
+    {% if error %}
+    <div class="auth-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <div class="auth-field">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required autofocus value="{{ username or '' }}">
+      </div>
+      <div class="auth-field">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+      </div>
+      <button class="auth-submit" type="submit">Log in</button>
+    </form>
+
+    <div class="auth-footer">No account yet? <a href="/register">Create one</a></div>
+  </div>
+</div>
+</body>
+</html>
