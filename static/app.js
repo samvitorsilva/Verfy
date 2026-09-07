@@ -38,6 +38,59 @@ audioEl.preload = "metadata";
 let audioCtx = null, analyser = null, sourceNode = null, freqData = null;
 let rafViz = null;
 
+/* ============================================================
+   SYSTEM MEDIA CONTROLS
+   ============================================================
+   Android's notification / lock-screen media card is driven by the browser's
+   Media Session API.  Keep it tied to the same audio element that powers the
+   in-app player so notification actions and UI actions can never get out of
+   sync.  Browsers that do not support Media Session simply ignore this.
+   ============================================================ */
+const mediaSession = navigator.mediaSession || null;
+
+function mediaArtworkFor(track){
+  if(!track || !track.art) return [];
+  // MediaMetadata resolves relative URLs in most browsers, but an absolute
+  // URL is required by a few Android WebView/browser versions.
+  let src = track.art;
+  try{ src = new URL(track.art, window.location.href).href; }catch(_){}
+  return [96, 128, 192, 256, 384, 512].map(size => ({
+    src, sizes: `${size}x${size}`, type: "image/jpeg"
+  }));
+}
+
+function updateMediaSessionMetadata(){
+  if(!mediaSession || !window.MediaMetadata) return;
+  const track = currentTrack();
+  if(!track) return;
+  try{
+    mediaSession.metadata = new MediaMetadata({
+      title: track.title || "Unknown title",
+      artist: artistCreditsLabel(track) || "Unknown artist",
+      album: track.album || "",
+      artwork: mediaArtworkFor(track),
+    });
+  }catch(err){
+    // Metadata is an enhancement; invalid embedded artwork must never stop
+    // playback (notably on older Android browsers).
+    console.warn("Could not set system media metadata", err);
+  }
+}
+
+function updateMediaSessionPosition(){
+  if(!mediaSession || !mediaSession.setPositionState) return;
+  const duration = audioEl.duration;
+  const position = audioEl.currentTime;
+  if(!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(position)) return;
+  try{
+    mediaSession.setPositionState({
+      duration,
+      position: Math.max(0, Math.min(position, duration)),
+      playbackRate: audioEl.playbackRate || 1,
+    });
+  }catch(_){}
+}
+
 const AURA_PALETTE = [
   ["#8b7fff","#54e8d4"], ["#ff8fb1","#8b7fff"], ["#54e8d4","#3aa0ff"],
   ["#ffb86b","#ff6b9d"], ["#6bd6ff","#8b7fff"], ["#c084fc","#54e8d4"],
@@ -127,6 +180,7 @@ function generateAura(seed, size=300){
    ============================================================ */
 let LYRICS_SYNC_DEBUG = false;
 let _lyricsLastLoggedIdx = null;
+let lyricsSyncClockRaf = null;
 const LyricsDebug = {
   log(...args){ if(LYRICS_SYNC_DEBUG) console.log("%c[lyrics-sync]", "color:#54e8d4;font-weight:600;", ...args); },
   warn(...args){ if(LYRICS_SYNC_DEBUG) console.warn("[lyrics-sync]", ...args); },
@@ -376,16 +430,6 @@ const LyricsEngine = (() => {
     lines.sort((a,b)=>a.time-b.time);
     return { source:"lrc", lines };
   }
-  function plainToTimed(text, duration){
-    const lines = (text || "").split(/\r?\n/).map(line => line.trim()).filter(Boolean);
-    if(!lines.length || !Number.isFinite(duration) || duration <= 0) return null;
-    const usableDuration = Math.max(duration * 1000 - 500, 0);
-    const step = lines.length > 1 ? usableDuration / (lines.length - 1) : 0;
-    return {
-      source: "custom-synced",
-      lines: lines.map((textLine, index) => ({ time: Math.round(index * step), text: textLine })),
-    };
-  }
   // Online lookup — LRCLIB (https://lrclib.net), a free, keyless, CORS-enabled
   // public database purpose-built for synced (LRC) lyrics. Called straight from
   // the browser: this app has no server of its own, so a backend that could
@@ -457,7 +501,7 @@ const LyricsEngine = (() => {
     if(!result) result = await fromOnline(track);
     return result || null;
   }
-  return { fromID3, fromLRC, plainToTimed, fromOnline, resolve };
+  return { fromID3, fromLRC, fromOnline, resolve };
 })();
 
 /* ============================================================
@@ -967,6 +1011,7 @@ function playCurrent(){
     return;
   }
   audioEl.volume = state.muted ? 0 : state.volume;
+  updateMediaSessionMetadata();
   audioEl.play().catch(()=>{});
   updateNowPlayingUI();
   renderQueuePanel();
@@ -1015,15 +1060,64 @@ function playPrev(){
   playCurrent();
 }
 
+function installMediaSessionHandlers(){
+  if(!mediaSession) return;
+  const handlers = {
+    play: () => togglePlay(),
+    pause: () => audioEl.pause(),
+    previoustrack: () => playPrev(),
+    nexttrack: () => playNext(false),
+    seekbackward: (details) => {
+      const offset = Number(details.seekOffset) || 10;
+      audioEl.currentTime = Math.max(0, (audioEl.currentTime || 0) - offset);
+    },
+    seekforward: (details) => {
+      const offset = Number(details.seekOffset) || 10;
+      if(Number.isFinite(audioEl.duration)){
+        audioEl.currentTime = Math.min(audioEl.duration, (audioEl.currentTime || 0) + offset);
+      }
+    },
+    seekto: (details) => {
+      if(Number.isFinite(details.seekTime)){
+        const duration = audioEl.duration;
+        audioEl.currentTime = Number.isFinite(duration)
+          ? Math.max(0, Math.min(duration, details.seekTime))
+          : Math.max(0, details.seekTime);
+      }
+    },
+  };
+  Object.entries(handlers).forEach(([action, handler]) => {
+    try{ mediaSession.setActionHandler(action, handler); }catch(_){}
+  });
+}
+
+installMediaSessionHandlers();
+
 audioEl.addEventListener("ended", () => playNext(true));
-audioEl.addEventListener("play", () => syncPlayIcons(true));
-audioEl.addEventListener("pause", () => syncPlayIcons(false));
-audioEl.addEventListener("timeupdate", () => { updateSeekUI(); if($("#lyricsOverlay").classList.contains("open")) updateLyricsHighlight(); });
+audioEl.addEventListener("play", () => {
+  syncPlayIcons(true);
+  try{ if(mediaSession) mediaSession.playbackState = "playing"; }catch(_){}
+  updateMediaSessionPosition();
+});
+audioEl.addEventListener("pause", () => {
+  syncPlayIcons(false);
+  try{ if(mediaSession) mediaSession.playbackState = "paused"; }catch(_){}
+  updateMediaSessionPosition();
+});
+audioEl.addEventListener("timeupdate", () => {
+  updateSeekUI();
+  updateMediaSessionPosition();
+  if($("#lyricsOverlay").classList.contains("open")) updateLyricsHighlight();
+});
 audioEl.addEventListener("seeked", () => {
   LyricsDebug.log(`seeked → t=${audioEl.currentTime.toFixed(2)}s, recalculating active line`);
+  updateMediaSessionPosition();
   if($("#lyricsOverlay").classList.contains("open")) updateLyricsHighlight(true);
 });
-audioEl.addEventListener("loadedmetadata", () => updateSeekUI());
+audioEl.addEventListener("loadedmetadata", () => {
+  updateSeekUI();
+  updateMediaSessionPosition();
+});
 
 function syncPlayIcons(playing){
   const pathPlay = 'M9 6.8v10.4L18.2 12z';
@@ -1079,6 +1173,10 @@ function lyricsEmptyMarkup(title, sub){
   </div>`;
 }
 function renderLyricsStage(){
+  if(lyricsSyncClockRaf){
+    cancelAnimationFrame(lyricsSyncClockRaf);
+    lyricsSyncClockRaf = null;
+  }
   const stage = $("#lyricsStage");
   const bg = $("#lyricsBg");
   const t = currentTrack();
@@ -1100,7 +1198,10 @@ function renderLyricsStage(){
     const linesHtml = t.lyrics.lines.map((ln,i) =>
       `<div class="lyrics-line" data-time="${ln.time}" data-i="${i}">${escapeHtml(ln.text) || "&nbsp;"}</div>`
     ).join("");
-    stage.innerHTML = sideMarkup + `<div class="lyrics-viewport"><div class="lyrics-track" id="lyricsTrack">${linesHtml}</div></div>`;
+    const resyncButton = t.customLyrics
+      ? `<button class="btn lyrics-resync-btn" id="btnResyncLyrics">Re-sync to audio</button>`
+      : "";
+    stage.innerHTML = sideMarkup + `<div class="lyrics-viewport"><div class="lyrics-track" id="lyricsTrack">${linesHtml}</div></div>${resyncButton}`;
     // defensive: confirm lines are truly ascending — the highlight scan below
     // assumes this and only re-sorts here if something upstream ever regresses.
     const linesRef = t.lyrics.lines;
@@ -1119,11 +1220,12 @@ function renderLyricsStage(){
         if(isFinite(time)) audioEl.currentTime = time;
       });
     });
+    $("#btnResyncLyrics")?.addEventListener("click", () => openLyricsSyncEditor(t));
     updateLyricsHighlight(true);
   } else if(t.lyrics && t.lyrics.text){
     const paragraphs = t.lyrics.text.split(/\n{2,}/).map(p => `<p>${escapeHtml(p)}</p>`).join("");
     stage.innerHTML = sideMarkup + `<div class="lyrics-plain">${paragraphs}<button class="btn btn-primary lyrics-sync-btn" id="btnSyncLyrics">Sync to audio</button></div>`;
-    $("#btnSyncLyrics").addEventListener("click", () => syncPastedLyrics(t));
+    $("#btnSyncLyrics").addEventListener("click", () => openLyricsSyncEditor(t));
   } else if(!t.lyricsResolved){
     // Nothing cached yet. Prefer lyrics embedded in the saved file's ID3 tags
     // (instant, offline, already on disk), then fall back to LRCLIB.
@@ -1183,22 +1285,6 @@ function renderLyricsStage(){
     $("#btnPasteLyrics").addEventListener("click", () => openLyricsEditor(t));
   }
 }
-async function syncPastedLyrics(track){
-  const duration = currentTrack()?.id === track.id && Number.isFinite(audioEl.duration)
-    ? audioEl.duration
-    : track.duration;
-  const synced = LyricsEngine.plainToTimed(track.lyrics?.text, duration);
-  if(!synced){ toast("This track has no usable duration for syncing."); return; }
-  const lrc = timedLyricsToLrc(synced.lines);
-  try{
-    await saveTrackLyrics(track, lrc);
-    track.customLyrics = lrc;
-    track.lyrics = synced;
-    track.lyricsResolved = true;
-    toast("Lyrics synced to the track");
-    renderLyricsStage();
-  }catch(e){ toast(e.message || "Could not sync lyrics"); }
-}
 function timedLyricsToLrc(lines){
   return lines.map(line => {
     const totalSeconds = Math.max(0, line.time) / 1000;
@@ -1206,6 +1292,92 @@ function timedLyricsToLrc(lines){
     const seconds = (totalSeconds % 60).toFixed(2).padStart(5, "0");
     return `[${String(minutes).padStart(2, "0")}:${seconds}]${line.text}`;
   }).join("\n");
+}
+function openLyricsSyncEditor(track){
+  const timedLines = track.lyrics?.lines;
+  const text = track.lyrics?.text || track.customLyrics || "";
+  const lines = timedLines?.length
+    ? timedLines.map(line => line.text.trim()).filter(Boolean)
+    : text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if(!lines.length){ toast("Paste lyrics before syncing them."); return; }
+
+  // Plain lyric text contains no timing information.  Do not invent evenly
+  // spaced timestamps: it looks synced, but every verse is wrong.  Instead,
+  // record the audio clock when the listener taps each line.
+  const stamps = new Array(lines.length).fill(null);
+  const stage = $("#lyricsStage");
+  const renderRows = () => lines.map((line, index) => {
+    const stamp = stamps[index];
+    return `<button type="button" class="lyrics-sync-line${stamp !== null ? " stamped" : ""}" data-line-index="${index}">
+      <span class="lyrics-sync-line-time">${stamp === null ? "Tap at this line" : fmtTime(stamp / 1000)}</span>
+      <span>${escapeHtml(line)}</span>
+    </button>`;
+  }).join("");
+  stage.innerHTML = `
+    <div class="lyrics-sync-editor">
+      <div class="lyrics-editor-heading">
+        <h3>Sync lyrics to audio</h3>
+        <p>Start the song, then tap each line when it is sung. You can tap a line again to correct it.</p>
+      </div>
+      <div class="lyrics-sync-clock">Playback: <strong id="lyricsSyncTime">${fmtTime(audioEl.currentTime || 0)}</strong></div>
+      <div class="lyrics-sync-lines" id="lyricsSyncLines">${renderRows()}</div>
+      <div class="lyrics-editor-actions">
+        <button class="btn" id="btnCancelLyricsSync">Back</button>
+        <button class="btn" id="btnSyncFromStart">Play from start</button>
+        <button class="btn btn-primary" id="btnSaveSyncedLyrics" disabled>Save synced lyrics</button>
+      </div>
+    </div>`;
+
+  const saveButton = $("#btnSaveSyncedLyrics");
+  const refresh = () => {
+    const list = $("#lyricsSyncLines");
+    if(!list) return;
+    list.innerHTML = renderRows();
+    list.querySelectorAll("[data-line-index]").forEach(button => {
+      button.addEventListener("click", () => {
+        const index = Number(button.dataset.lineIndex);
+        stamps[index] = Math.max(0, Math.round((audioEl.currentTime || 0) * 1000));
+        refresh();
+      });
+    });
+    saveButton.disabled = stamps.some(stamp => stamp === null);
+  };
+  refresh();
+
+  $("#btnCancelLyricsSync").addEventListener("click", renderLyricsStage);
+  $("#btnSyncFromStart").addEventListener("click", () => {
+    audioEl.currentTime = 0;
+    audioEl.play().catch(() => toast("Press play, then tap each lyric line."));
+  });
+  saveButton.addEventListener("click", async () => {
+    for(let index=1; index<stamps.length; index++){
+      if(stamps[index] < stamps[index - 1]){
+        toast("Lyrics must be tapped in song order. Correct the out-of-order line.");
+        return;
+      }
+    }
+    saveButton.disabled = true;
+    try{
+      const synced = { source:"custom-synced", lines: lines.map((line, index) => ({ time:stamps[index], text:line })) };
+      const saved = await saveTrackLyrics(track, timedLyricsToLrc(synced.lines));
+      track.customLyrics = saved.custom_lyrics;
+      track.lyrics = synced;
+      track.lyricsResolved = true;
+      toast("Lyrics synced to the track");
+      renderLyricsStage();
+    }catch(e){
+      saveButton.disabled = false;
+      toast(e.message || "Could not save synced lyrics");
+    }
+  });
+
+  const updateClock = () => {
+    const clock = $("#lyricsSyncTime");
+    if(!clock){ lyricsSyncClockRaf = null; return; }
+    clock.textContent = fmtTime(audioEl.currentTime || 0);
+    lyricsSyncClockRaf = requestAnimationFrame(updateClock);
+  };
+  updateClock();
 }
 function openLyricsEditor(track){
   const stage = $("#lyricsStage");
@@ -1230,10 +1402,7 @@ function openLyricsEditor(track){
     button.disabled = true;
     try{
       const parsed = LyricsEngine.fromLRC(lyrics);
-      const duration = currentTrack()?.id === track.id && Number.isFinite(audioEl.duration)
-        ? audioEl.duration
-        : track.duration;
-      const synced = parsed || LyricsEngine.plainToTimed(lyrics, duration);
+      const synced = parsed;
       const lyricsToSave = synced?.lines ? timedLyricsToLrc(synced.lines) : lyrics;
       const saved = await saveTrackLyrics(track, lyricsToSave);
       // Use the value accepted by the account-scoped API, rather than merely
@@ -1241,7 +1410,7 @@ function openLyricsEditor(track){
       track.customLyrics = saved.custom_lyrics;
       track.lyrics = LyricsEngine.fromLRC(track.customLyrics) || synced || { source:"custom", text:track.customLyrics };
       track.lyricsResolved = true;
-      toast(synced?.lines ? "Lyrics saved and synced" : "Lyrics saved");
+      toast(synced?.lines ? "Timestamped lyrics saved" : "Lyrics saved — use Sync to audio to add timing");
       renderLyricsStage();
     }catch(e){
       button.disabled = false;
@@ -1306,7 +1475,13 @@ function updateLyricsHighlight(instant){
   }
 }
 function openLyrics(){ closeViz(); renderLyricsStage(); $("#lyricsOverlay").classList.add("open"); }
-function closeLyrics(){ $("#lyricsOverlay").classList.remove("open"); }
+function closeLyrics(){
+  $("#lyricsOverlay").classList.remove("open");
+  if(lyricsSyncClockRaf){
+    cancelAnimationFrame(lyricsSyncClockRaf);
+    lyricsSyncClockRaf = null;
+  }
+}
 
 /* ---------- full visualizer overlay (radial spectrum) ---------- */
 function drawViz(){

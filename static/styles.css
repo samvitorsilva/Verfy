@@ -751,6 +751,7 @@ body.mini-mode .mini-player{ display:block; }
 }
 .lyrics-plain p{ font-size:17px; line-height:1.9; color:var(--text-mid); white-space:pre-wrap; max-width:640px; }
 .lyrics-sync-btn{ display:block; margin:24px 0 0; }
+.lyrics-resync-btn{ align-self:center; margin-top:12px; }
 .lyrics-empty{ flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:16px; text-align:center; color:var(--text-dim); }
 .lyrics-empty h3{ font-size:18px; color:var(--text); font-weight:700; }
 .lyrics-empty p{ font-size:13px; max-width:300px; line-height:1.5; }
@@ -761,6 +762,15 @@ body.mini-mode .mini-player{ display:block; }
 .lyrics-input{ width:100%; min-height:360px; resize:vertical; padding:16px; border-radius:14px; border:1px solid var(--border-hi); background:rgba(12,14,20,.62); color:var(--text); font:14px/1.6 var(--font-body); outline:none; }
 .lyrics-input:focus{ border-color:var(--cyan); box-shadow:0 0 0 3px rgba(84,232,212,.12); }
 .lyrics-editor-actions{ display:flex; justify-content:flex-end; gap:10px; }
+.lyrics-sync-editor{ width:min(680px, 100%); margin:auto; display:flex; flex-direction:column; gap:16px; }
+.lyrics-sync-clock{ color:var(--text-dim); font-size:13px; font-family:var(--font-mono); }
+.lyrics-sync-clock strong{ color:var(--cyan); }
+.lyrics-sync-lines{ max-height:min(52vh, 500px); overflow-y:auto; display:flex; flex-direction:column; gap:7px; padding-right:5px; }
+.lyrics-sync-line{ width:100%; display:grid; grid-template-columns:116px 1fr; gap:12px; align-items:center; text-align:left; padding:12px 14px; border:1px solid var(--border); border-radius:12px; background:rgba(12,14,20,.48); color:var(--text-mid); font:14px/1.4 var(--font-body); cursor:pointer; }
+.lyrics-sync-line:hover{ border-color:var(--border-hi); color:var(--text); }
+.lyrics-sync-line.stamped{ border-color:rgba(84,232,212,.42); color:var(--text); }
+.lyrics-sync-line-time{ color:var(--text-dim); font:11px var(--font-mono); }
+.lyrics-sync-line.stamped .lyrics-sync-line-time{ color:var(--cyan); }
 
 .shortcuts-overlay{
   position:fixed; inset:0; z-index:90; background:rgba(8,10,16,0.55); backdrop-filter:blur(10px);
