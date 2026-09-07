@@ -40,7 +40,7 @@ It's built to feel like an app, not a website: responsive on both desktop and mo
 
 ## Stack
 
-**Backend** — Python, FastAPI, Uvicorn, SQLite, bcrypt, Starlette sessions, Jinja2, python-multipart
+**Backend** — Python, FastAPI, Uvicorn, SQLAlchemy, PostgreSQL (Supabase), Alembic, bcrypt, Starlette sessions, Jinja2, python-multipart
 
 **Audio/media** — Mutagen for metadata and ID3 handling, Pillow for artwork
 
@@ -114,18 +114,33 @@ uvicorn server:app --host 0.0.0.0 --port 8765
 
 ---
 
-## Where your data lives
+## Persistent data and deployment
 
-Everything sits under `data/`:
+Vervfy now stores accounts, bcrypt password hashes, tracks/audio, cover art,
+custom lyrics, favorites, and playlists in PostgreSQL. `data/` is only used
+for the local-development session-key fallback and is not required on Render.
+No database URL or credentials are committed to the repository.
+
+1. Create a Supabase project and copy its PostgreSQL connection string.
+2. In Render, set `DATABASE_URL` to that value (use the Supabase pooler URL if
+   Render cannot reach the direct host), `AURALIS_SECRET_KEY` to a stable random
+   64+ character secret, and `AURALIS_HTTPS_ONLY=1`.
+3. Set the Render build command to `pip install -r requirements.txt` and start
+   command to `alembic upgrade head && uvicorn server:app --host 0.0.0.0 --port $PORT`.
+
+The migration is idempotent and must run before the app starts. Browser-only
+favorites/playlists are imported to PostgreSQL automatically on the user's
+first login after deployment. For an existing local server, make a backup and
+run `DATABASE_URL='...' python scripts/migrate_local_data.py data`; it copies
+legacy users/tracks without deleting or modifying the old SQLite/files.
 
 ```text
-data/
-├── users.db
-├── .secret_key
-└── users/
-    └── <user-id>/
-        ├── uploads/
-        └── covers/
+Supabase PostgreSQL
+├── users
+├── tracks (audio and cover bytes, metadata, lyrics)
+├── favorites
+├── playlists
+└── playlist_tracks
 ```
 
 Each account gets its own folder — uploads and covers included. None of it gets shipped off to a third party; the only outside calls Vervfy makes are optional ones, for lyrics lookup and artist info, and playback works fine without them.
@@ -218,8 +233,7 @@ When Vervfy looks up an artist, it tries to actually match the right one rather 
 
 Things I'd like to get to eventually:
 
-- [ ] Cloud deployment support
-- [ ] A real production database (SQLite is fine for now, but...)
+- [x] Cloud deployment support (Supabase PostgreSQL + Render)
 - [ ] Multi-device sync
 - [ ] More metadata providers
 - [ ] Smarter playlists

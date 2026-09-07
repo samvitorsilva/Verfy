@@ -1,16 +1,18 @@
-"""Accounts: SQLite user store, password hashing, sessions, CSRF, login throttling."""
+"""Accounts: PostgreSQL-backed user store, password hashing, sessions, CSRF."""
 
 from __future__ import annotations
 
 import re
 import secrets
-import sqlite3
 import time
 import uuid
-from pathlib import Path
 
 import bcrypt
 from fastapi import HTTPException, Request
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
+
+from db import SessionLocal, User
 
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
 
@@ -18,34 +20,7 @@ USERNAME_RE = re.compile(r"^[a-zA-Z0-9_.-]{3,32}$")
 # ---------------------------------------------------------------- user store
 
 class UserStore:
-    """Tiny SQLite-backed user table. One row per account."""
-
-    def __init__(self, db_path: str):
-        self.db_path = db_path
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-        with self._conn() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    id TEXT PRIMARY KEY,
-                    username TEXT UNIQUE COLLATE NOCASE NOT NULL,
-                    email TEXT UNIQUE,
-                    password_hash TEXT NOT NULL,
-                    created_at REAL NOT NULL
-                )
-                """
-            )
-            # Older databases predate the case-insensitive column collation.
-            # The index applies the same rule without requiring a table rebuild.
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS users_username_nocase "
-                "ON users(username COLLATE NOCASE)"
-            )
-
-    def _conn(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+    """Small SQLAlchemy store.  Rows remain mapping-compatible with routes."""
 
     def create_user(self, username: str, email: str | None, password: str) -> dict:
         user_id = uuid.uuid4().hex
@@ -54,36 +29,34 @@ class UserStore:
         # emails would otherwise collide on the second account that skips email.
         if email is not None:
             email = email.strip() or None
-        with self._conn() as conn:
+        with SessionLocal() as session:
             try:
-                conn.execute(
-                    "INSERT INTO users (id, username, email, password_hash, created_at) "
-                    "VALUES (?, ?, ?, ?, ?)",
-                    (user_id, username, email, password_hash, time.time()),
-                )
-            except sqlite3.IntegrityError as exc:
+                session.add(User(id=user_id, username=username, username_key=username.lower(), email=email,
+                                 password_hash=password_hash, created_at=time.time()))
+                session.commit()
+            except IntegrityError as exc:
+                session.rollback()
                 raise ValueError("That username or email is already taken") from exc
         return {"id": user_id, "username": username, "email": email}
 
-    def get_by_username(self, username: str) -> sqlite3.Row | None:
-        with self._conn() as conn:
-            return conn.execute(
-                "SELECT * FROM users WHERE username = ? COLLATE NOCASE", (username,)
-            ).fetchone()
+    def get_by_username(self, username: str):
+        with SessionLocal() as session:
+            return session.scalar(select(User).where(User.username_key == username.lower()))
 
-    def get_by_id(self, user_id: str) -> sqlite3.Row | None:
-        with self._conn() as conn:
-            return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+    def get_by_id(self, user_id: str):
+        with SessionLocal() as session:
+            return session.get(User, user_id)
 
     def update_password(self, user_id: str, new_password_hash: str) -> None:
-        with self._conn() as conn:
-            conn.execute(
-                "UPDATE users SET password_hash = ? WHERE id = ?", (new_password_hash, user_id)
-            )
+        with SessionLocal() as session:
+            row = session.get(User, user_id)
+            if row:
+                row.password_hash = new_password_hash
+                session.commit()
 
     def count(self) -> int:
-        with self._conn() as conn:
-            return conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()["c"]
+        with SessionLocal() as session:
+            return session.scalar(select(func.count()).select_from(User)) or 0
 
 
 # ---------------------------------------------------------- password hashing

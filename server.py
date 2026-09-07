@@ -21,15 +21,16 @@ from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from starlette.middleware.sessions import SessionMiddleware
 
 import auth
+from db import Favorite, Playlist, PlaylistTrack, SessionLocal, TrackRecord
 from library import Library
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 STATIC_DIR = ROOT / "static"
-USERS_DIR = DATA_DIR / "users"
 SECRET_KEY_PATH = DATA_DIR / ".secret_key"
 
 
@@ -68,7 +69,7 @@ app.add_middleware(
     max_age=60 * 60 * 24 * 30,  # 30 days
 )
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
-user_store = auth.UserStore(str(DATA_DIR / "users.db"))
+user_store = auth.UserStore()
 login_throttle = auth.LoginThrottle()
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024
 
@@ -490,32 +491,11 @@ def _lookup_artist_profile(name: str) -> dict[str, str] | None:
     return profile
 
 
-def _migrate_legacy_data_to(user_id: str) -> None:
-    """One-time move of pre-accounts data (data/library.json, uploads/, covers/)
-    into the first account created, so existing libraries aren't stranded."""
-    legacy_index = DATA_DIR / "library.json"
-    legacy_uploads = DATA_DIR / "uploads"
-    legacy_covers = DATA_DIR / "covers"
-    if not legacy_index.is_file() and not legacy_uploads.is_dir():
-        return
-    user_dir = USERS_DIR / user_id
-    user_dir.mkdir(parents=True, exist_ok=True)
-    import shutil
-
-    if legacy_index.is_file():
-        shutil.move(str(legacy_index), str(user_dir / "library.json"))
-    if legacy_uploads.is_dir():
-        shutil.move(str(legacy_uploads), str(user_dir / "uploads"))
-    if legacy_covers.is_dir():
-        shutil.move(str(legacy_covers), str(user_dir / "covers"))
-
-
 def get_library(user_id: str) -> Library:
-    """One Library instance per account, lazily created under data/users/<id>/."""
+    """One lightweight, PostgreSQL-backed library facade per account."""
     lib = _libraries.get(user_id)
     if lib is None:
-        user_dir = USERS_DIR / user_id
-        lib = Library(str(user_dir))
+        lib = Library(user_id)
         _libraries[user_id] = lib
     return lib
 
@@ -569,7 +549,6 @@ def _track_payload(track) -> dict:
 
 @app.on_event("startup")
 def startup() -> None:
-    os.makedirs(USERS_DIR, exist_ok=True)
     app.state.is_first_account = user_store.count() == 0
 
 
@@ -675,9 +654,7 @@ def register_submit(
     except ValueError as exc:
         return fail(str(exc))
 
-    if request.app.state.is_first_account:
-        _migrate_legacy_data_to(new_user["id"])
-        request.app.state.is_first_account = False
+    request.app.state.is_first_account = False
 
     request.session.clear()
     request.session["user_id"] = new_user["id"]
@@ -727,6 +704,28 @@ class TrackLyricsRequest(BaseModel):
     lyrics: str = Field(..., min_length=1, max_length=200_000)
 
 
+class PlaylistState(BaseModel):
+    id: str = Field(min_length=1, max_length=64)
+    name: str = Field(min_length=1, max_length=200)
+    trackIds: list[str] = Field(default_factory=list, max_length=10_000)
+
+
+class LibraryStateRequest(BaseModel):
+    favorites: list[str] = Field(default_factory=list, max_length=10_000)
+    playlists: list[PlaylistState] = Field(default_factory=list, max_length=1_000)
+
+
+def _library_state(user_id: str) -> dict:
+    with SessionLocal() as session:
+        favorites = session.scalars(select(Favorite.track_id).where(Favorite.user_id == user_id)).all()
+        playlists = session.scalars(select(Playlist).where(Playlist.user_id == user_id)).all()
+        return {"favorites": favorites, "playlists": [
+            {"id": playlist.id, "name": playlist.name,
+             "trackIds": [item.track_id for item in playlist.tracks]}
+            for playlist in playlists
+        ]}
+
+
 @app.post("/api/account/password")
 def change_password(
     payload: PasswordChangeRequest,
@@ -759,6 +758,46 @@ def service_worker() -> FileResponse:
 @app.get("/api/health")
 def health(user=Depends(require_api_user)) -> dict:
     return {"ok": True, "tracks": len(get_library(user["id"]).list_tracks())}
+
+
+@app.get("/api/library/state")
+def get_library_state(user=Depends(require_api_user)) -> dict:
+    """Server-backed favorites and playlists, shared across browsers/redeploys."""
+    return _library_state(user["id"])
+
+
+@app.put("/api/library/state")
+def save_library_state(
+    payload: LibraryStateRequest,
+    user=Depends(require_api_user),
+    _csrf=Depends(auth.verify_api_csrf),
+) -> dict:
+    # Accept only tracks belonging to this account; this prevents cross-account
+    # playlist references and cleans stale browser IndexedDB entries safely.
+    with SessionLocal() as session:
+        valid_ids = set(session.scalars(select(TrackRecord.id).where(TrackRecord.user_id == user["id"])).all())
+        favorite_ids = list(dict.fromkeys(track_id for track_id in payload.favorites if track_id in valid_ids))
+        session.query(Favorite).filter_by(user_id=user["id"]).delete()
+        session.add_all(Favorite(user_id=user["id"], track_id=track_id) for track_id in favorite_ids)
+        existing = {playlist.id: playlist for playlist in session.scalars(select(Playlist).where(Playlist.user_id == user["id"])).all()}
+        requested = set()
+        for item in payload.playlists:
+            if item.id in requested:
+                continue
+            requested.add(item.id)
+            playlist = existing.pop(item.id, None)
+            if playlist is None:
+                playlist = Playlist(id=item.id, user_id=user["id"], name=item.name.strip())
+                session.add(playlist)
+            else:
+                playlist.name = item.name.strip()
+                playlist.tracks.clear()
+            ids = list(dict.fromkeys(track_id for track_id in item.trackIds if track_id in valid_ids))
+            playlist.tracks = [PlaylistTrack(track_id=track_id, position=index) for index, track_id in enumerate(ids)]
+        for playlist in existing.values():
+            session.delete(playlist)
+        session.commit()
+    return _library_state(user["id"])
 
 
 @app.get("/api/artists/photo")
@@ -845,19 +884,14 @@ def track_cover(
 
 
 @app.get("/api/tracks/{track_id}/stream")
-def track_stream(track_id: str, user=Depends(require_api_user)) -> FileResponse:
+def track_stream(track_id: str, user=Depends(require_api_user)) -> Response:
     library = get_library(user["id"])
     track = library.get(track_id)
-    if track is None or not os.path.isfile(track.path):
+    if track is None:
         raise HTTPException(status_code=404, detail="Track not found")
-    media_type = mimetypes.guess_type(track.path)[0] or "audio/mpeg"
-    # inline so <audio> streams it; attachment would hint "download"
-    return FileResponse(
-        track.path,
-        media_type=media_type,
-        filename=os.path.basename(track.path),
-        content_disposition_type="inline",
-    )
+    media_type = mimetypes.guess_type(track.filename)[0] or "audio/mpeg"
+    return Response(content=track.audio_data, media_type=media_type,
+                    headers={"Content-Disposition": f'inline; filename="{track.filename}"'})
 
 
 @app.get("/api/tracks/{track_id}/tag-head")
@@ -870,12 +904,11 @@ def track_tag_head(track_id: str, user=Depends(require_api_user)) -> Response:
     """
     library = get_library(user["id"])
     track = library.get(track_id)
-    if track is None or not os.path.isfile(track.path):
+    if track is None:
         raise HTTPException(status_code=404, detail="Track not found")
     # Cap covers large ID3 blocks (artwork) plus a window of audio frames.
     max_bytes = 2 * 1024 * 1024
-    with open(track.path, "rb") as handle:
-        data = handle.read(max_bytes)
+    data = track.audio_data[:max_bytes]
     return Response(
         content=data,
         media_type="application/octet-stream",

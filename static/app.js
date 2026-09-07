@@ -660,9 +660,8 @@ const ArtistProfileEngine = (() => {
 })();
 
 /* ============================================================
-   PERSISTENCE — IndexedDB for settings/favorites/playlists.
-   Audio files themselves are saved by the local Auralis server
-   (data/uploads) and reloaded via /api/tracks on launch.
+   PERSISTENCE — IndexedDB keeps device-only player settings. Favorites,
+   playlists, tracks, lyrics, covers, and audio are PostgreSQL-backed.
    ============================================================ */
 const AuralisDB = (() => {
   const DB_NAME = "auralis-db", DB_VERSION = 1;
@@ -729,7 +728,14 @@ async function saveLibraryMeta(){
     id:p.id, name:p.name,
     trackIds: [...p.trackIds]
   }));
-  await AuralisDB.set("auralis:library", JSON.stringify({favorites, playlists}));
+  try{
+    const res = await fetch("/api/library/state", {
+      method:"PUT", credentials:"same-origin",
+      headers:{"Content-Type":"application/json", "X-CSRF-Token":await ensureCsrfToken()},
+      body:JSON.stringify({favorites, playlists})
+    });
+    if(!res.ok) throw new Error("Could not save library state");
+  }catch(error){ console.warn("Could not sync library state", error); }
 }
 async function loadPersisted(){
   try{
@@ -797,7 +803,19 @@ async function loadServerLibrary(){
     if(!res.ok) throw new Error("bad status "+res.status);
     const data = await res.json();
     state.tracks = (data.tracks || []).map(trackFromServer);
-    relinkPersistedLibrary();
+    const legacy = window._persistedLibrary;
+    const stateRes = await fetch("/api/library/state");
+    if(stateRes.ok){
+      const remote = await stateRes.json();
+      if(!(remote.favorites||[]).length && !(remote.playlists||[]).length && legacy &&
+         ((legacy.favorites||[]).length || (legacy.playlists||[]).length)){
+        relinkPersistedLibrary();
+        await saveLibraryMeta();
+      } else {
+        window._persistedLibrary = remote;
+        relinkPersistedLibrary();
+      }
+    } else relinkPersistedLibrary();
     return state.tracks.length;
   }catch(e){
     console.warn("Could not load server library", e);
