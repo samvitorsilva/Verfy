@@ -678,13 +678,12 @@ def logout_get(request: Request) -> Response:
 
 @app.get("/api/me")
 def api_me(user=Depends(require_api_user)) -> dict:
-    library = get_library(user["id"])
     return {
         "id": user["id"],
         "username": user["username"],
         "email": user["email"],
         "created_at": user["created_at"],
-        "track_count": len(library.list_tracks()),
+        "track_count": get_library(user["id"]).count_tracks(),
     }
 
 
@@ -726,6 +725,31 @@ def _library_state(user_id: str) -> dict:
         ]}
 
 
+def _parse_range_header(range_header: str, size: int) -> tuple[int, int] | None:
+    if not range_header or not range_header.startswith("bytes="):
+        return None
+    spec = range_header[6:].strip()
+    if not spec or "," in spec:
+        return None
+    if spec.startswith("-"):
+        suffix = int(spec[1:])
+        if suffix <= 0 or suffix > size:
+            return None
+        return max(0, size - suffix), size - 1
+    start_str, _, end_str = spec.partition("-")
+    try:
+        start = int(start_str)
+        end = int(end_str) if end_str else size - 1
+    except ValueError:
+        return None
+    if start < 0 or start >= size:
+        return None
+    end = min(end, size - 1)
+    if end < start:
+        return None
+    return start, end
+
+
 @app.post("/api/account/password")
 def change_password(
     payload: PasswordChangeRequest,
@@ -757,7 +781,7 @@ def service_worker() -> FileResponse:
 
 @app.get("/api/health")
 def health(user=Depends(require_api_user)) -> dict:
-    return {"ok": True, "tracks": len(get_library(user["id"]).list_tracks())}
+    return {"ok": True, "tracks": get_library(user["id"]).count_tracks()}
 
 
 @app.get("/api/library/state")
@@ -830,18 +854,17 @@ async def upload_track(
 ) -> dict:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
-    chunks: list[bytes] = []
+    buffer = bytearray()
     total_bytes = 0
     while chunk := await file.read(1024 * 1024):
         total_bytes += len(chunk)
         if total_bytes > MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=413, detail="Upload exceeds the 500 MB limit")
-        chunks.append(chunk)
-    data = b"".join(chunks)
-    if not data:
+        buffer.extend(chunk)
+    if not buffer:
         raise HTTPException(status_code=400, detail="Empty upload")
     library = get_library(user["id"])
-    track = library.add_upload(file.filename, data)
+    track = library.add_upload(file.filename, bytes(buffer))
     if track is None:
         raise HTTPException(status_code=400, detail="Could not read uploaded audio file")
     return _track_payload(track)
@@ -880,18 +903,54 @@ def track_cover(
     library = get_library(user["id"])
     if library.get(track_id) is None:
         raise HTTPException(status_code=404, detail="Track not found")
-    return Response(content=library.cover_jpeg(track_id, size), media_type="image/jpeg")
+    payload = library.cover_jpeg(track_id, size)
+    return Response(
+        content=payload,
+        media_type="image/jpeg",
+        headers={
+            "Cache-Control": "public, max-age=86400, stale-while-revalidate=604800",
+            "Content-Length": str(len(payload)),
+        },
+    )
 
 
 @app.get("/api/tracks/{track_id}/stream")
-def track_stream(track_id: str, user=Depends(require_api_user)) -> Response:
+def track_stream(request: Request, track_id: str, user=Depends(require_api_user)) -> Response:
     library = get_library(user["id"])
     track = library.get(track_id)
     if track is None:
         raise HTTPException(status_code=404, detail="Track not found")
-    media_type = mimetypes.guess_type(track.filename)[0] or "audio/mpeg"
-    return Response(content=track.audio_data, media_type=media_type,
-                    headers={"Content-Disposition": f'inline; filename="{track.filename}"'})
+
+    data, filename = library.audio_bytes(track_id)
+    if data is None or filename is None:
+        raise HTTPException(status_code=404, detail="Track not found")
+
+    media_type = mimetypes.guess_type(filename)[0] or "audio/mpeg"
+    size = len(data)
+    range_header = request.headers.get("range")
+    if not range_header:
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(size),
+            "Content-Disposition": f'inline; filename="{filename}"',
+            "Cache-Control": "private, max-age=3600",
+        }
+        return Response(content=data, media_type=media_type, headers=headers)
+
+    range_match = _parse_range_header(range_header, size)
+    if range_match is None:
+        return Response(status_code=416, headers={"Content-Range": f"bytes */{size}", "Accept-Ranges": "bytes"})
+
+    start, end = range_match
+    chunk = data[start : end + 1]
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Range": f"bytes {start}-{end}/{size}",
+        "Content-Length": str(len(chunk)),
+        "Content-Disposition": f'inline; filename="{filename}"',
+        "Cache-Control": "private, max-age=3600",
+    }
+    return Response(content=chunk, status_code=206, media_type=media_type, headers=headers)
 
 
 @app.get("/api/tracks/{track_id}/tag-head")
@@ -903,14 +962,12 @@ def track_tag_head(track_id: str, user=Depends(require_api_user)) -> Response:
     reuse its existing ID3 parser without downloading the whole track.
     """
     library = get_library(user["id"])
-    track = library.get(track_id)
-    if track is None:
+    if library.get(track_id) is None:
         raise HTTPException(status_code=404, detail="Track not found")
-    # Cap covers large ID3 blocks (artwork) plus a window of audio frames.
     max_bytes = 2 * 1024 * 1024
-    data = track.audio_data[:max_bytes]
+    data, _ = library.audio_bytes(track_id, max_bytes=max_bytes)
     return Response(
-        content=data,
+        content=data or b"",
         media_type="application/octet-stream",
         headers={"Cache-Control": "private, max-age=3600"},
     )
