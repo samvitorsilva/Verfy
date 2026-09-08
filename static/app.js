@@ -1,19 +1,45 @@
 (() => {
 "use strict";
 
+// Backend API hosted on Render
+const API_BASE = "https://verfy-5znt.onrender.com";
+
+function apiUrl(path) {
+  return `${API_BASE}${path}`;
+}
+
 /* If the session cookie expires mid-use, any /api/* call will start
    returning 401 — send the user back to the login page instead of
    leaving them staring at a library that silently stopped loading. */
 (() => {
   const _fetch = window.fetch.bind(window);
-  window.fetch = async (...args) => {
-    const res = await _fetch(...args);
-    const url = typeof args[0] === "string" ? args[0] : (args[0] && args[0].url) || "";
-    if (res.status === 401 && url.startsWith("/api/")) {
-      window.location.href = "/login";
-    }
-    return res;
-  };
+
+window.fetch = async (...args) => {
+  // Send API requests to the FastAPI backend on Render
+  if (typeof args[0] === "string" && args[0].startsWith("/api/")) {
+    args[0] = apiUrl(args[0]);
+  }
+
+  // Send session cookies with cross-origin API requests
+  if (typeof args[1] === "object" && args[1] !== null) {
+    args[1].credentials = "include";
+  } else {
+    args[1] = { credentials: "include" };
+  }
+
+  const res = await _fetch(...args);
+
+  const url =
+    typeof args[0] === "string"
+      ? args[0]
+      : (args[0] && args[0].url) || "";
+
+  if (res.status === 401 && url.includes("/api/")) {
+    window.location.href = "/login";
+  }
+
+  return res;
+};
 })();
 
 /* ============================================================
