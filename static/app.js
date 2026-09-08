@@ -35,7 +35,7 @@ window.fetch = async (...args) => {
       : (args[0] && args[0].url) || "";
 
   if (res.status === 401 && url.includes("/api/")) {
-    window.location.href = "/login";
+    window.location.href = apiUrl("/login");
   }
 
   return res;
