@@ -78,6 +78,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+FRONTEND_URL = os.environ.get("FRONTEND_URL", "/")
+
+def frontend_redirect() -> RedirectResponse:
+    return RedirectResponse(FRONTEND_URL, status_code=303)
+
 templates = Jinja2Templates(directory=str(ROOT / "templates"))
 user_store = auth.UserStore()
 login_throttle = auth.LoginThrottle()
@@ -578,7 +583,7 @@ def index(request: Request, user=Depends(require_page_user)) -> HTMLResponse:
 @app.get("/login", response_class=HTMLResponse)
 def login_form(request: Request) -> HTMLResponse:
     if current_user_row(request) is not None:
-        return RedirectResponse("/", status_code=303)
+        return frontend_redirect()
     return templates.TemplateResponse(
         request, "login.html", {"csrf_token": auth.get_or_create_csrf_token(request)}
     )
@@ -617,13 +622,13 @@ def login_submit(
     login_throttle.clear(ip, username)
     request.session.clear()
     request.session["user_id"] = row["id"]
-    return RedirectResponse("/", status_code=303)
+    return frontend_redirect()
 
 
 @app.get("/register", response_class=HTMLResponse)
 def register_form(request: Request) -> HTMLResponse:
     if current_user_row(request) is not None:
-        return RedirectResponse("/", status_code=303)
+        return frontend_redirect()
     return templates.TemplateResponse(
         request, "register.html", {"csrf_token": auth.get_or_create_csrf_token(request)}
     )
@@ -668,14 +673,14 @@ def register_submit(
 
     request.session.clear()
     request.session["user_id"] = new_user["id"]
-    return RedirectResponse("/", status_code=303)
+    return frontend_redirect()
 
 
 @app.post("/logout")
 def logout(request: Request, csrf_token: str = Form(...)) -> Response:
     auth.verify_csrf(request, csrf_token)
     request.session.clear()
-    return RedirectResponse("/login", status_code=303)
+    return frontend_redirect()
 
 
 @app.get("/logout")
@@ -683,7 +688,7 @@ def logout_get(request: Request) -> Response:
     # A GET must not change authentication state. Keep this route as a
     # compatibility redirect for old bookmarks and links.
     del request
-    return RedirectResponse("/login", status_code=303)
+    return frontend_redirect()
 
 
 @app.get("/api/me")
