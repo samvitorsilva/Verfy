@@ -2448,6 +2448,16 @@ on("#vizOverlay", "click",(e)=>{ if(e.target.id==="vizOverlay") closeViz(); });
 on("#btnQueueToggle", "click", ()=> $("#sidePanel").classList.toggle("open"));
 on("#btnCloseQueue", "click", ()=> $("#sidePanel").classList.remove("open"));
 
+on("#btnLogout", "click", async () => {
+  try {
+    await fetch(apiUrl("/logout"), {
+      method: "POST",
+      headers: { "X-CSRF-Token": await ensureCsrfToken() },
+    });
+  } catch (_) {}
+  window.location.reload();
+});
+  
 on("#btnMini", "click", ()=> enterMiniMode());
 on("#btnMiniExit", "click", ()=> exitMiniMode());
 function enterMiniMode(){
