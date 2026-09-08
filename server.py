@@ -64,7 +64,7 @@ app.add_middleware(
     SessionMiddleware,
     secret_key=_load_or_create_secret_key(),
     session_cookie="auralis_session",
-    same_site="lax",
+    same_site="none",
     https_only=os.environ.get("AURALIS_HTTPS_ONLY", "0") == "1",
     max_age=60 * 60 * 24 * 30,  # 30 days
 )
