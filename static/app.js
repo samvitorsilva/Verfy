@@ -797,30 +797,43 @@ function trackFromServer(payload){
   };
 }
 
-async function loadServerLibrary(){
-  try{
-    const res = await fetch("/api/tracks");
-    if(!res.ok) throw new Error("bad status "+res.status);
-    const data = await res.json();
-    state.tracks = (data.tracks || []).map(trackFromServer);
-    const legacy = window._persistedLibrary;
-    const stateRes = await fetch("/api/library/state");
-    if(stateRes.ok){
-      const remote = await stateRes.json();
-      if(!(remote.favorites||[]).length && !(remote.playlists||[]).length && legacy &&
-         ((legacy.favorites||[]).length || (legacy.playlists||[]).length)){
-        relinkPersistedLibrary();
-        await saveLibraryMeta();
-      } else {
-        window._persistedLibrary = remote;
-        relinkPersistedLibrary();
-      }
-    } else relinkPersistedLibrary();
-    return state.tracks.length;
-  }catch(e){
-    console.warn("Could not load server library", e);
-    return 0;
-  }
+let serverLibraryRequest = null;
+let serverLibraryLoaded = false;
+
+async function loadServerLibrary(force = false){
+  if(!force && serverLibraryLoaded){ return state.tracks.length; }
+  if(!force && serverLibraryRequest){ return serverLibraryRequest; }
+
+  serverLibraryRequest = (async () => {
+    try{
+      const res = await fetch("/api/tracks");
+      if(!res.ok) throw new Error("bad status "+res.status);
+      const data = await res.json();
+      state.tracks = (data.tracks || []).map(trackFromServer);
+      const legacy = window._persistedLibrary;
+      const stateRes = await fetch("/api/library/state");
+      if(stateRes.ok){
+        const remote = await stateRes.json();
+        if(!(remote.favorites||[]).length && !(remote.playlists||[]).length && legacy &&
+           ((legacy.favorites||[]).length || (legacy.playlists||[]).length)){
+          relinkPersistedLibrary();
+          await saveLibraryMeta();
+        } else {
+          window._persistedLibrary = remote;
+          relinkPersistedLibrary();
+        }
+      } else relinkPersistedLibrary();
+      serverLibraryLoaded = true;
+      return state.tracks.length;
+    }catch(e){
+      console.warn("Could not load server library", e);
+      return 0;
+    } finally {
+      serverLibraryRequest = null;
+    }
+  })();
+
+  return serverLibraryRequest;
 }
 
 /* ============================================================
@@ -2510,7 +2523,11 @@ document.addEventListener("visibilitychange", ()=>{
 /* ============================================================
    INIT
    ============================================================ */
+let initializationStarted = false;
+
 async function init(){
+  if(initializationStarted) return;
+  initializationStarted = true;
   try{
     const label = $("#btnImportTopLabel"); if(label) label.textContent = "Add music";
     $("#btnImportRail")?.setAttribute("data-tip", "Add music");
